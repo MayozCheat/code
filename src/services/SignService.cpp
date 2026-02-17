@@ -6,6 +6,7 @@
 #include <ctime>
 #include <vector>
 #include <algorithm>
+#include <sstream>
 
 using nlohmann::json;
 
@@ -16,8 +17,15 @@ static long long nowSec() {
 static std::string scalarToString(const json& v) {
     if (v.is_string()) return v.get<std::string>();
     if (v.is_number_integer()) return std::to_string(v.get<long long>());
-    if (v.is_number_float()) return std::to_string(v.get<double>());
+    if (v.is_number_unsigned()) return std::to_string(v.get<unsigned long long>());
+    if (v.is_number_float()) {
+        // 与 vendor/client 侧保持一致，避免固定小数位导致签名不一致
+        std::ostringstream oss;
+        oss << v.get<double>();
+        return oss.str();
+    }
     if (v.is_boolean()) return v.get<bool>() ? "true" : "false";
+    if (v.is_null()) return "null";
     // 为了保证一致性：只允许标量
     return "";
 }
