@@ -124,7 +124,14 @@ static std::string ScalarToStringForSign(const json& v) {
     if (v.is_boolean()) return v.get<bool>() ? "true" : "false";
     if (v.is_number_integer()) return std::to_string(v.get<long long>());
     if (v.is_number_unsigned()) return std::to_string(v.get<unsigned long long>());
-    if (v.is_number_float()) return std::to_string(v.get<double>());
+    if (v.is_number_float()) {
+        // 与 vendor 端保持一致：不使用 std::to_string(固定 6 位)
+        // 避免出现 "1.500000" vs "1.5" 的签名不一致。
+        std::ostringstream oss;
+        oss << v.get<double>();
+        return oss.str();
+    }
+    if (v.is_null()) return "null";
     return "";
 }
 
