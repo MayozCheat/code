@@ -209,14 +209,22 @@ static bool WinHttpPostJson(const ParsedUrl& p,
         WINHTTP_NO_PROXY_BYPASS,
         0);
 
-    if (!hSession) { outErr = "WinHttpOpen failed"; return false; }
+    auto SetWinHttpError = [&](const char* where) {
+        DWORD le = GetLastError();
+        outErr = std::string(where) + " failed le=" + std::to_string(le);
+        };
+
+    if (!hSession) {
+        SetWinHttpError("WinHttpOpen");
+        return false;
+    }
 
     WinHttpSetTimeouts(hSession, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
 
     HINTERNET hConnect = WinHttpConnect(hSession, p.host.c_str(), p.port, 0);
     if (!hConnect) {
         WinHttpCloseHandle(hSession);
-        outErr = "WinHttpConnect failed";
+        SetWinHttpError("WinHttpConnect");
         return false;
     }
 
@@ -231,7 +239,7 @@ static bool WinHttpPostJson(const ParsedUrl& p,
     if (!hRequest) {
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
-        outErr = "WinHttpOpenRequest failed";
+        SetWinHttpError("WinHttpOpenRequest");
         return false;
     }
 
@@ -246,7 +254,7 @@ static bool WinHttpPostJson(const ParsedUrl& p,
         0);
 
     if (!b) {
-        outErr = "WinHttpSendRequest failed";
+        SetWinHttpError("WinHttpSendRequest");
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
@@ -255,7 +263,7 @@ static bool WinHttpPostJson(const ParsedUrl& p,
 
     b = WinHttpReceiveResponse(hRequest, nullptr);
     if (!b) {
-        outErr = "WinHttpReceiveResponse failed";
+        SetWinHttpError("WinHttpReceiveResponse");
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
