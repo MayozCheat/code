@@ -1,6 +1,9 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <iostream>
 #include <cstdlib>
 #include <iomanip>
+#include <algorithm>
+#include <cctype>
 
 #include "db/DbConfig.h"
 #include "db/DbPool.h"
@@ -16,18 +19,25 @@
 
 int main() {
     // 1) 从环境变量读取（保留安全默认值）
+    auto trim = [](std::string s) {
+        auto notSpace = [](unsigned char ch) { return !std::isspace(ch); };
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
+        s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
+        return s;
+        };
+
     auto envOr = [](const char* k, const char* defv, bool& usedEnv) {
         const char* v = std::getenv(k);
         usedEnv = (v && *v);
         return std::string(usedEnv ? v : defv);
-    };
+        };
 
     bool usedEnvUrl = false, usedEnvKey = false, usedEnvMachine = false, usedEnvSecret = false;
 
-    std::string vendorUrl = envOr("VENDOR_URL", "http://127.0.0.1:9001", usedEnvUrl);
-    std::string vendorKey = envOr("VENDOR_KEY", "VENDOR-TEST", usedEnvKey);
-    std::string machine = envOr("MACHINE_CODE", "A-SERVER-001", usedEnvMachine);
-    std::string vendorSecret = envOr("VENDOR_SECRET", "TEST-SECRET-CHANGE-ME-0123456789abcdef0123456789abcdef", usedEnvSecret);
+    std::string vendorUrl = trim(envOr("VENDOR_URL", "http://127.0.0.1:9001", usedEnvUrl));
+    std::string vendorKey = trim(envOr("VENDOR_KEY", "VENDOR-TEST", usedEnvKey));
+    std::string machine = trim(envOr("MACHINE_CODE", "", usedEnvMachine));
+    std::string vendorSecret = trim(envOr("VENDOR_SECRET", "TEST-SECRET-0123456789abcdef0123456789abcdef", usedEnvSecret));
 
     std::cout
         << "[VendorConfig] url=" << vendorUrl << (usedEnvUrl ? " (env)" : " (default)") << "\n"
@@ -40,7 +50,9 @@ int main() {
     }
 
     if (vendorSecret.find("CHANGE-ME") != std::string::npos) {
-        std::cerr << "[WARN] VENDOR_SECRET is using insecure placeholder. Please set env VENDOR_SECRET in production.\n";
+        std::cerr << "[ERROR] VENDOR_SECRET is still using placeholder, vendor check will fail with sign_mismatch.\n";
+        std::cerr << "[ERROR] Set env VENDOR_SECRET to vendor_license.vendor_secret before starting.\n";
+        return 1;
     }
 
     // 2) 启动前必须通过 vendor 授权
@@ -73,4 +85,3 @@ int main() {
     server.listen(ip, port);
    
 }
-
