@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <sstream>
+#include <cctype>
 
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
@@ -121,11 +122,22 @@ static bool VerifySignHex(const std::string& secret,
         return false;
     }
 
-    std::string got = body["sign"].get<std::string>();
+    auto toLowerAscii = [](std::string s) {
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    };
+    auto constantTimeEquals = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        unsigned char diff = 0;
+        for (size_t i = 0; i < a.size(); ++i) diff |= (unsigned char)(a[i] ^ b[i]);
+        return diff == 0;
+    };
+
+    std::string got = toLowerAscii(body["sign"].get<std::string>());
     if (outExpected) *outExpected = expected;
     if (outCanonical) *outCanonical = canonical;
 
-    if (got != expected) {
+    if (!constantTimeEquals(got, expected)) {
         outErr = "sign_mismatch";
         return false;
     }

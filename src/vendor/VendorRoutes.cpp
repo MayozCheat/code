@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <memory>
 #include <chrono>
+#include <cctype>
 
 #include <mysql/jdbc.h>
 
@@ -163,6 +164,42 @@ static std::string HmacSha256Hex(const std::string& key, const std::string& msg)
     return out;
 }
 
+// 常量时间比较，降低时序侧信道
+static bool ConstantTimeEquals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        diff |= (unsigned char)(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
+
+static std::string ToLowerAscii(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+static std::string TrimAscii(const std::string& s) {
+    size_t l = 0, r = s.size();
+    while (l < r && std::isspace((unsigned char)s[l])) ++l;
+    while (r > l && std::isspace((unsigned char)s[r - 1])) --r;
+    return s.substr(l, r - l);
+}
+
+static std::string NormalizeSecret(const std::string& raw) {
+    std::string s = TrimAscii(raw);
+    // 兼容 DB/脚本中误存引号："secret" 或 'secret'
+    if (s.size() >= 2) {
+        char a = s.front();
+        char b = s.back();
+        if ((a == '"' && b == '"') || (a == '\'' && b == '\'')) {
+            s = s.substr(1, s.size() - 2);
+            s = TrimAscii(s);
+        }
+    }
+    return s;
+}
+
 // ----------------------- VerifySignHex -----------------------
 static bool VerifySignHex(const std::string& secret,
     const std::string& method,
@@ -187,12 +224,12 @@ static bool VerifySignHex(const std::string& secret,
     }
 
     std::string payload = method + "\n" + path + "\n" + canonical;
-    std::string expected = HmacSha256Hex(secret, payload);
+    std::string expected = HmacSha256Hex(NormalizeSecret(secret), payload);
 
     if (outCanonical) *outCanonical = canonical;
     if (outExpected) *outExpected = expected;
 
-    if (clientSign != expected) {
+    if (!ConstantTimeEquals(ToLowerAscii(clientSign), expected)) {
         outErr = "sign_mismatch";
         return false;
     }
@@ -201,12 +238,11 @@ static bool VerifySignHex(const std::string& secret,
 
 // ----------------------- 公共：admin_key 校验 -----------------------
 static bool CheckAdminKey(const json& in, httplib::Response& res) {
-    const std::string ADMIN_KEY = "2222112176-AdminKey-2026";
     if (!in.contains("admin_key") || !in["admin_key"].is_string()) {
         HttpJson::reply(res, HttpJson::fail("bad_fields"), 400);
         return false;
     }
-    if (in["admin_key"].get<std::string>() != ADMIN_KEY) {
+    if (in["admin_key"].get<std::string>() != AppConfig::ADMIN_KEY) {
         HttpJson::reply(res, HttpJson::fail("bad_admin_key"), 403);
         return false;
     }
@@ -393,7 +429,7 @@ void HandleVendorCheckFinal(const httplib::Request& req, httplib::Response& res,
         auto in = HttpJson::parse(req, res);
         if (in.is_null()) return;
 
-        std::cout << "[Vendor] JSON=" << in.dump() << "\n" << std::flush;
+        std::cout << "[Vendor] JSON received (redacted)\n" << std::flush;
 
         // 2) fields
         if (!in.contains("vendor_key") || !in["vendor_key"].is_string() ||
@@ -889,8 +925,7 @@ void SetupVendorRoutes(httplib::Server& svr, DbPool& dbPool) {
         const int64_t ts = in["ts"].get<int64_t>();
         const std::string nonce = in["nonce"].get<std::string>();
 
-        const std::string ADMIN_KEY = "2222112176-AdminKey-2026";
-        if (admin_key != ADMIN_KEY) {
+        if (admin_key != AppConfig::ADMIN_KEY) {
             HttpJson::reply(res, HttpJson::fail("bad_admin_key"), 403);
             return;
         }
@@ -1510,9 +1545,9 @@ static bool VerifyVendorSign(const std::string& method,
         return false;
     }
     std::string payload = method + "\n" + path + "\n" + canonical;
-    std::string expected = HmacSha256Hex(vendor_secret, payload);
+    std::string expected = HmacSha256Hex(NormalizeSecret(vendor_secret), payload);
     std::string got = body["sign"].get<std::string>();
-    if (got != expected) {
+    if (!ConstantTimeEquals(ToLowerAscii(got), expected)) {
         outErr = "sign_mismatch";
         return false;
     }
