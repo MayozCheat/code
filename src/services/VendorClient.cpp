@@ -12,6 +12,7 @@
 #include <sstream>
 #include <vector>
 #include <random>
+#include <cctype>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -98,6 +99,27 @@ static std::string UrlEncodeUtf8(const std::string& s) {
         }
     }
     return out;
+}
+
+static std::string TrimAscii(const std::string& s) {
+    size_t l = 0, r = s.size();
+    while (l < r && std::isspace((unsigned char)s[l])) ++l;
+    while (r > l && std::isspace((unsigned char)s[r - 1])) --r;
+    return s.substr(l, r - l);
+}
+
+static std::string NormalizeSecret(const std::string& raw) {
+    std::string s = TrimAscii(raw);
+    // 兼容部署时误加引号："secret" 或 'secret'
+    if (s.size() >= 2) {
+        char a = s.front();
+        char b = s.back();
+        if ((a == '"' && b == '"') || (a == '\'' && b == '\'')) {
+            s = s.substr(1, s.size() - 2);
+            s = TrimAscii(s);
+        }
+    }
+    return s;
 }
 
 static std::string HmacSha256Hex(const std::string& key, const std::string& msg) {
@@ -273,6 +295,11 @@ VendorCheckResult VendorClient::Check(const std::string& vendorUrl,
     if (!p.ok) { r.err = "bad_vendor_url"; return r; }
 
     const std::string path = "/vendor/check";
+    const std::string cleanSecret = NormalizeSecret(vendorSecret);
+    if (cleanSecret.empty()) {
+        r.err = "bad_vendor_secret";
+        return r;
+    }
 
     json req;
     req["vendor_key"] = vendorKey;
@@ -281,7 +308,7 @@ VendorCheckResult VendorClient::Check(const std::string& vendorUrl,
     req["nonce"] = NewNonce16Hex();
 
     // 生成 sign（注意：path/method 必须与服务端验证一致）
-    std::string sign = MakeSign("POST", path, req, vendorSecret);
+    std::string sign = MakeSign("POST", path, req, cleanSecret);
     if (sign.empty()) {
         r.err = "make_sign_failed";
         return r;
@@ -342,6 +369,10 @@ void VendorClient::CheckOrExit(const std::string& vendorUrl,
         bool isNet =
             (r.err.find("le=12029") != std::string::npos) ||
             (r.err.find("le=12007") != std::string::npos);
+
+        if (r.err == "sign_mismatch") {
+            std::cerr << "[Vendor] hint: check VENDOR_KEY/VENDOR_SECRET with DB vendor_license.vendor_key/vendor_secret and remove accidental leading/trailing spaces.\n";
+        }
 
         if (!isNet) {
             std::cerr << "Program will exit.\n";

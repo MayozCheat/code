@@ -179,6 +179,27 @@ static std::string ToLowerAscii(std::string s) {
     return s;
 }
 
+static std::string TrimAscii(const std::string& s) {
+    size_t l = 0, r = s.size();
+    while (l < r && std::isspace((unsigned char)s[l])) ++l;
+    while (r > l && std::isspace((unsigned char)s[r - 1])) --r;
+    return s.substr(l, r - l);
+}
+
+static std::string NormalizeSecret(const std::string& raw) {
+    std::string s = TrimAscii(raw);
+    // 兼容 DB/脚本中误存引号："secret" 或 'secret'
+    if (s.size() >= 2) {
+        char a = s.front();
+        char b = s.back();
+        if ((a == '"' && b == '"') || (a == '\'' && b == '\'')) {
+            s = s.substr(1, s.size() - 2);
+            s = TrimAscii(s);
+        }
+    }
+    return s;
+}
+
 // ----------------------- VerifySignHex -----------------------
 static bool VerifySignHex(const std::string& secret,
     const std::string& method,
@@ -203,7 +224,7 @@ static bool VerifySignHex(const std::string& secret,
     }
 
     std::string payload = method + "\n" + path + "\n" + canonical;
-    std::string expected = HmacSha256Hex(secret, payload);
+    std::string expected = HmacSha256Hex(NormalizeSecret(secret), payload);
 
     if (outCanonical) *outCanonical = canonical;
     if (outExpected) *outExpected = expected;
@@ -1524,7 +1545,7 @@ static bool VerifyVendorSign(const std::string& method,
         return false;
     }
     std::string payload = method + "\n" + path + "\n" + canonical;
-    std::string expected = HmacSha256Hex(vendor_secret, payload);
+    std::string expected = HmacSha256Hex(NormalizeSecret(vendor_secret), payload);
     std::string got = body["sign"].get<std::string>();
     if (!ConstantTimeEquals(ToLowerAscii(got), expected)) {
         outErr = "sign_mismatch";
